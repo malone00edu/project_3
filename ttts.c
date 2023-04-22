@@ -36,6 +36,9 @@ bool get_o_name(int gameID, int oBytes, int playerO, char *oMessageBuf, bool oNa
 
 bool get_x_name(int gameID, int xBytes, int playerX, char *xMessageBuf, bool xNameAssigned, const char *nameInUse);
 
+
+bool get_move(char player, int socket, int otherplayersock, char board[3][3], bool gameOver);
+
 int playerSocket[99]; // Total amount of players allowed on the server. (Starts at 0. Using array logic.)
 
 typedef struct players {
@@ -48,6 +51,8 @@ typedef struct players {
 } players;
 
 players *tttArray;
+
+
 
 int main(int argc, char **argv) {
 
@@ -170,6 +175,7 @@ int open_listener(char *service, int queue_size) {
     return sock;
 }
 
+
 void *ttt_session(void *sessionID) {
     int gameID = *((int *) sessionID);
     assert(gameID != -1);
@@ -227,9 +233,72 @@ void *ttt_session(void *sessionID) {
     memset(oMessageBuf, 0, BUFSIZE);
 
     strcpy(xMessageBuf, "In session with ");
-    strcat(xMessageBuf, playerXName);
+    strcat(xMessageBuf, playerOName);
     check(write(playerXSocket, xMessageBuf, strlen(xMessageBuf)), "Send failed");
     memset(xMessageBuf, 0, BUFSIZE);
+
+
+    char board[3][3] = { {' ', ' ', ' '},  
+                        {' ', ' ', ' '}, 
+                        {' ', ' ', ' '} };
+
+
+    //write code to send a blank board to the clients here
+    char boardString[BUFSIZE];
+    sprintf(boardString, "\n   1   2   3\n1  %c | %c | %c \n  ---+---+---\n2  %c | %c | %c \n  ---+---+---\n3  %c | %c | %c \n", 
+        board[0][0], board[0][1], board[0][2], 
+        board[1][0], board[1][1], board[1][2], 
+        board[2][0], board[2][1], board[2][2]);
+
+    check(write(playerXSocket, boardString, strlen(boardString)), "Send failed");
+    check(write(playerOSocket, boardString, strlen(boardString)), "Send failed");
+
+    //create loop here that will get move from player x first then player o
+    //write code here
+
+// Initialize the game over flag
+bool gameOver = false;
+
+fcntl(playerXSocket, F_SETFL, flagsX);
+fcntl(playerOSocket,F_SETFL, flagsO );
+// Loop until the game is over
+
+         
+    char win[] = "You win!\n";
+    char lose[]= "You lose!\n";
+    char draw[]= "Game Tied!\n";
+int rounds =0;
+while (!gameOver) {
+    // Get a move from player X
+    gameOver= get_move('X',  playerXSocket, playerOSocket, board, gameOver);
+    if (gameOver){
+        check(write(playerXSocket, win, strlen(win)), "Send failed");
+        check(write(playerOSocket, lose, strlen(lose)), "Send failed");
+        break;
+    }  
+    rounds++;
+    //draw
+    if (rounds==9){
+        check(write(playerXSocket, draw, strlen(draw)), "Send failed");
+        check(write(playerOSocket, draw, strlen(draw)), "Send failed");
+        break;
+    }
+
+    //get a move from player O
+    gameOver= get_move('O',  playerOSocket, playerXSocket, board, gameOver);
+
+    if (gameOver){
+        check(write(playerXSocket, win, strlen(win)), "Send failed");
+        check(write(playerOSocket, lose, strlen(lose)), "Send failed");
+        break;
+    }
+
+    rounds++;
+
+
+}
+
+
 
 
     // Simple chat loop. Doesn't have to be used. You can now type msgs in respective player's terminals.
@@ -264,12 +333,105 @@ void *ttt_session(void *sessionID) {
         }
     }
 
+
     free(sessionID);
     close(playerXSocket);
     close(playerOSocket);
     return NULL;
 }
 
+bool get_move(char player, int socket, int otherplayersock, char board[3][3], bool gameOver){
+
+    bool validMove=false;
+    bool success=true;
+    char movebuf[BUFSIZE];
+    char boardString[BUFSIZE];
+
+    while (!validMove) {
+
+        char prompt[BUFSIZE];
+        sprintf(prompt, "Player %c, enter your move as row,column:", player);
+        check(write(socket, prompt, strlen(prompt)), "Send failed");
+        // Clear the buffer before receiving input from Player O
+        memset(movebuf, 0, BUFSIZE * sizeof(char));
+
+        int bytesReceived = read(socket, movebuf, BUFSIZE);
+        if (bytesReceived <= 0) {
+           continue;
+        }
+
+        int row=0, col=0;
+        if (sscanf(movebuf, "%d,%d", &row, &col) != 2 || row < 1 || row > 3 || col < 1 || col > 3 || board[row-1][col-1] != ' '){
+            char invalid[] = "Invalid move. Try again.\n";
+            check(write(socket, invalid, strlen(invalid)), "Send failed");
+        }
+        else {
+            
+            row--;
+            col--;
+
+            board[row][col]=player;
+            validMove=true;
+            //updates board
+            sprintf(boardString, "\n   1   2   3\n1  %c | %c | %c \n  ---+---+---\n2  %c | %c | %c \n  ---+---+---\n3  %c | %c | %c \n", 
+            board[0][0], board[0][1], board[0][2], 
+            board[1][0], board[1][1], board[1][2], 
+            board[2][0], board[2][1], board[2][2]);
+
+            //insert win condition here
+
+            //horizontal win
+            if (board[row][col]==board[0][0] && board[0][0]==board[0][1] && board[0][0]==board[0][2]){
+          
+                gameOver=true; 
+            }
+            else if(board[row][col]==board[1][0] && board[1][0]==board[1][1] && board[1][0]==board[1][2]){
+    
+                gameOver=true;
+            }
+            else if(board[row][col]==board[2][0] && board[2][0]==board[2][1] && board[2][0]==board[2][2]){
+            
+                gameOver=true;
+            }
+
+            //vertical win
+            else if (board[row][col]==board[0][0] && board[0][0]==board[1][0] && board[0][0]==board[2][0]){
+          
+                gameOver=true; 
+            }
+            else if (board[row][col]==board[0][1] && board[0][1]==board[1][1] && board[0][1]==board[2][1]){
+              
+                gameOver=true; 
+            }
+            else if (board[row][col]==board[0][2] && board[0][2]==board[1][2] && board[0][2]==board[2][2]){
+           
+                gameOver=true; 
+            }
+
+            //diagnol win
+            else if (board[row][col]==board[0][0] && board[0][0]==board[1][1] && board[0][0]==board[2][2]){
+    
+                gameOver=true; 
+            }
+            else if (board[row][col]==board[0][2] && board[0][2]==board[1][1] && board[0][2]==board[0][2]){
+       
+                gameOver=true; 
+            }
+
+            
+            
+           
+        }
+    }
+    //prints updated board
+
+    check(write(socket, boardString, strlen(boardString)), "Send failed");
+    check(write(otherplayersock, boardString, strlen(boardString)), "Send failed");
+    return gameOver;
+
+}
+
+     
 // Get player X's name
 bool get_x_name(int gameID, int xBytes, int playerX, char *xMessageBuf, bool xNameAssigned, const char *nameInUse) {
     char xAcceptedBuf[BUFSIZE];
