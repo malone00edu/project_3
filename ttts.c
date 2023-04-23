@@ -15,6 +15,9 @@
 #include <pthread.h>
 #include <assert.h>
 #include <fcntl.h>
+#include <ctype.h>
+#include <string.h>
+
 
 #define SOCKETERROR (-1)
 #define QUEUE_SIZE 8
@@ -38,6 +41,12 @@ bool get_x_name(int gameID, int xBytes, int playerX, char *xMessageBuf, bool xNa
 
 
 bool get_move(char player, int socket, int otherplayersock, char board[3][3], bool gameOver);
+
+void get_options(char player, int socket, char*cmdBuf);
+
+char *strtrim(char *s);
+
+bool reqDraw (int socket, int otherplayersock);
 
 int playerSocket[99]; // Total amount of players allowed on the server. (Starts at 0. Using array logic.)
 
@@ -267,16 +276,65 @@ fcntl(playerOSocket,F_SETFL, flagsO );
     char win[] = "You win!\n";
     char lose[]= "You lose!\n";
     char draw[]= "Game Tied!\n";
-int rounds =0;
+    int rounds =0;
+
+    
+    char xFF[]="Player X has surrendered, you win!\n";
+    char oFF[]="Player O has surrendered, you win!\n";
+
+    char drawaccept[]="Both players accepted the draw! The game is tied";
+    char drawreject[]="Your opponent rejected the draw, the game will continue";
+
+
+
 while (!gameOver) {
+ 
+    char cmd[BUFSIZE];
+    
+    get_options('X',playerXSocket,cmd);
+
+    if(strcmp(cmd, "move") == 0) {
     // Get a move from player X
-    gameOver= get_move('X',  playerXSocket, playerOSocket, board, gameOver);
-    if (gameOver){
-        check(write(playerXSocket, win, strlen(win)), "Send failed");
-        check(write(playerOSocket, lose, strlen(lose)), "Send failed");
+        gameOver= get_move('X',  playerXSocket, playerOSocket, board, gameOver);
+        if (gameOver){
+            check(write(playerXSocket, win, strlen(win)), "Send failed");
+            check(write(playerOSocket, lose, strlen(lose)), "Send failed");
+            break;
+        }  
+        rounds++;
+    }
+
+
+    else if (strcmp(cmd, "ff") == 0){
+        check(write(playerXSocket, lose, strlen(lose)), "Send failed");
+        check(write(playerOSocket, xFF, strlen(xFF)), "Send failed");
         break;
-    }  
-    rounds++;
+    }
+  
+    
+    else {
+        bool acceptDraw= reqDraw(playerXSocket, playerOSocket);
+        if (acceptDraw){
+            check(write(playerXSocket, drawaccept, strlen(drawaccept)), "Send failed");
+            check(write(playerOSocket, drawaccept, strlen(drawaccept)), "Send failed");
+            break;
+        }
+        else {
+            //continue the game
+            check(write(playerXSocket, drawreject, strlen(drawreject)), "Send failed");
+
+            gameOver= get_move('X',  playerXSocket, playerOSocket, board, gameOver);
+            if (gameOver){
+                check(write(playerXSocket, win, strlen(win)), "Send failed");
+                check(write(playerOSocket, lose, strlen(lose)), "Send failed");
+                break;
+            }  
+        rounds++;
+
+        }
+
+    }
+
     //draw
     if (rounds==9){
         check(write(playerXSocket, draw, strlen(draw)), "Send failed");
@@ -284,17 +342,53 @@ while (!gameOver) {
         break;
     }
 
-    //get a move from player O
-    gameOver= get_move('O',  playerOSocket, playerXSocket, board, gameOver);
 
-    if (gameOver){
-        check(write(playerXSocket, win, strlen(win)), "Send failed");
-        check(write(playerOSocket, lose, strlen(lose)), "Send failed");
-        break;
+
+    //do the same for player O
+
+    get_options('O',playerOSocket,cmd);
+
+    if(strcmp(cmd, "move") == 0) {
+    // Get a move from player X
+        gameOver= get_move('O',  playerOSocket, playerXSocket, board, gameOver);
+        if (gameOver){
+            check(write(playerOSocket, win, strlen(win)), "Send failed");
+            check(write(playerXSocket, lose, strlen(lose)), "Send failed");
+            break;
+        }  
+        rounds++;
     }
 
-    rounds++;
 
+    else if (strcmp(cmd, "ff") == 0){
+        check(write(playerOSocket, lose, strlen(lose)), "Send failed");
+        check(write(playerXSocket, oFF, strlen(oFF)), "Send failed");
+        break;
+    }
+  
+    
+    else {
+        bool acceptDraw= reqDraw(playerOSocket, playerXSocket);
+        if (acceptDraw){
+            check(write(playerOSocket, drawaccept, strlen(drawaccept)), "Send failed");
+            check(write(playerXSocket, drawaccept, strlen(drawaccept)), "Send failed");
+            break;
+        }
+        else {
+            //continue the game
+            check(write(playerOSocket, drawreject, strlen(drawreject)), "Send failed");
+
+            gameOver= get_move('O',  playerOSocket, playerXSocket, board, gameOver);
+            if (gameOver){
+                check(write(playerOSocket, win, strlen(win)), "Send failed");
+                check(write(playerXSocket, lose, strlen(lose)), "Send failed");
+                break;
+            }  
+            rounds++;
+
+        }
+
+    }
 
 }
 
@@ -339,6 +433,101 @@ while (!gameOver) {
     close(playerOSocket);
     return NULL;
 }
+
+char *strtrim(char *s) {
+    // Trim leading whitespace
+    while (isspace(*s)) {
+        s++;
+    }
+    
+    // Trim trailing whitespace
+    char *end = s + strlen(s) - 1;
+    while (end > s && isspace(*end)) {
+        end--;
+    }
+    *(end+1) = '\0';
+    
+    return s;
+}
+
+bool reqDraw (int socket, int otherplayersock){
+    bool validReply=false;
+
+    char waiting[]= "Requesting draw ...waiting...\n";
+    check(write(socket, waiting, strlen(waiting)), "Send failed");
+
+    bool acceptDraw=false;
+
+    char optionBuf[BUFSIZE];
+    while (!validReply){
+        
+        char draw [] = "Your opponent requested for a draw, accept request? Y or N\n";
+        check(write(otherplayersock, draw, strlen(draw)), "Send failed");
+
+        memset(optionBuf, 0, BUFSIZE * sizeof(char));
+        
+        int bytesReceived = read(otherplayersock, optionBuf, BUFSIZE);
+        if (bytesReceived <= 0) {
+           continue;
+        }
+
+        char *trimmedBuf =strtrim(optionBuf);
+
+        if (strcmp(trimmedBuf, "Y") == 0 ){
+            acceptDraw=true;
+            validReply=true;
+        }
+        else if (strcmp(trimmedBuf, "N") == 0){
+            acceptDraw=false;
+            validReply=true;
+        }
+        else {
+            char invalidprompt []="INVALID COMMAND - RETRY";
+            check(write(socket, invalidprompt, strlen(invalidprompt)), "Send failed");
+            continue;
+        }
+    }
+
+    return acceptDraw;
+
+
+}
+
+
+void get_options(char player, int socket, char *cmdBuf){
+    //send options to player X
+    bool validCMD=false;
+
+    while (!validCMD){
+
+        char optionprompt[BUFSIZE];
+        sprintf(optionprompt, "Player %c, enter options: move, ff, draw ", player);
+        check(write(socket, optionprompt, strlen(optionprompt)), "Send failed");
+        //clear buffer
+        memset(cmdBuf, 0, BUFSIZE * sizeof(char));
+        //if invalid read then reenter
+        int bytesReceived = read(socket, cmdBuf, BUFSIZE);
+        if (bytesReceived <= 0) {
+           continue;
+        }
+
+        char *trimmedBuf =strtrim(cmdBuf);
+
+        if (strcmp(trimmedBuf, "move") == 0 || strcmp(trimmedBuf, "ff") == 0 || strcmp(trimmedBuf, "draw") == 0){
+            validCMD=true;
+        }
+        else {
+            char invalidprompt []="INVALID COMMAND - RETRY";
+            check(write(socket, invalidprompt, strlen(invalidprompt)), "Send failed");
+            continue;
+        }
+
+
+    }
+    
+    
+}
+
 
 bool get_move(char player, int socket, int otherplayersock, char board[3][3], bool gameOver){
 
@@ -461,6 +650,7 @@ bool get_x_name(int gameID, int xBytes, int playerX, char *xMessageBuf, bool xNa
                     strcpy(xAcceptedBuf, "Your name is valid. Welcome ");
                     strcat(xAcceptedBuf, tttArray[gameID].xName);
                     check(write(playerX, xAcceptedBuf, strlen(xAcceptedBuf)), "Send failed");
+
                     memset(xMessageBuf, 0, BUFSIZE * sizeof(char));
                     return xNameAssigned = true;
                 }
