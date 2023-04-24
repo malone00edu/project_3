@@ -460,39 +460,6 @@ void *ttt_session(void *sessionID) {
         }
     }
 
-    // Simple chat loop. Doesn't have to be used. You can now type msgs in respective player's terminals.
-    while (active) {
-        xBytesReceived = recv(playerXSocket, xMessageBuf, BUFSIZE, 0);
-        if (xBytesReceived == -1 && errno == EWOULDBLOCK) {
-            sleep((unsigned int) 0.1);
-        } else if (xBytesReceived == -1) {
-            perror("Read error");
-            exit(1);
-        } else {
-            if (xBytesReceived > 0) {
-                printf("%s: %s\n", playerXName, xMessageBuf);
-                check(send(playerOSocket, xMessageBuf, strlen(xMessageBuf), 0),
-                      "Send failed"); // Send playerXSocket msg to playerOSocket.
-                memset(xMessageBuf, 0, BUFSIZE);
-            }
-        }
-        oBytesReceived = recv(playerOSocket, oMessageBuf, BUFSIZE, 0);
-        if (oBytesReceived == -1 && errno == EWOULDBLOCK) {
-            sleep((unsigned int) 0.1);
-        } else if (oBytesReceived == -1) {
-            perror("Read error");
-            exit(1);
-        } else {
-            if (oBytesReceived > 0) {
-                printf("%s: %s\n", playerOName, oMessageBuf);
-                check(send(playerXSocket, oMessageBuf, strlen(oMessageBuf), 0),
-                      "Send failed"); // Send playerOSocket msg to playerXSocket.
-                memset(oMessageBuf, 0, BUFSIZE);
-            }
-        }
-    }
-
-
     free(sessionID);
     close(playerXSocket);
     close(playerOSocket);
