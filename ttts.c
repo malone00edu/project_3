@@ -20,6 +20,8 @@
 #define SOCKETERROR (-1)
 #define QUEUE_SIZE 8
 #define BUFSIZE 255
+#define CONTENTSIZE 1024
+
 
 volatile int active = 1;
 
@@ -283,7 +285,7 @@ void *ttt_session(void *sessionID) {
     while (!gameOver) {
 
         char package[BUFSIZE];
-        char content[BUFSIZE];
+        char content[CONTENTSIZE];
         memset(package, 0, BUFSIZE * sizeof(char));
         memset(content, 0, BUFSIZE * sizeof(char));
         char cmd[BUFSIZE];
@@ -486,7 +488,7 @@ bool reqDraw(int socket, int otherplayersock) {
     bool validReply = false;
 
     char package[BUFSIZE];
-    char content[BUFSIZE];
+    char content[CONTENTSIZE];
     memset(package, 0, BUFSIZE * sizeof(char));
     memset(content, 0, BUFSIZE * sizeof(char));
     char serverMsg[] = "DRAW|";
@@ -545,7 +547,7 @@ void get_options(char player, int socket, char *cmdBuf) {
 
     while (!validCMD) {
         char package[BUFSIZE];
-        char content[BUFSIZE];
+        char content[CONTENTSIZE];
         memset(package, 0, BUFSIZE * sizeof(char));
         memset(content, 0, BUFSIZE * sizeof(char));
         char serverMsg1[] = "TURN|";
@@ -590,7 +592,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
 
     while (!validMove) {
         char package[BUFSIZE];
-        char content[BUFSIZE];
+        char content[CONTENTSIZE];
         memset(package, 0, BUFSIZE * sizeof(char));
         memset(content, 0, BUFSIZE * sizeof(char));
         char serverMsg1[] = "TURN|";
@@ -674,7 +676,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
     printf("MOVE|%lu|%c|%s|\n", strlen(movebuf) + 3, player, movebuf);
     char serverMsg[] = "MOVD|";
     char package[BUFSIZE];
-    char content[1000];
+    char content[CONTENTSIZE];
     memset(package, 0, BUFSIZE * sizeof(char));
     memset(content, 0, BUFSIZE * sizeof(char));
     sprintf(content, "%ld|%c|%s|%s|\n", strlen(movebuf) + strlen(boardString) + 4, player, movebuf, boardString);
