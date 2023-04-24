@@ -35,7 +35,6 @@ bool get_o_name(int gameID, int oBytes, int playerO, char *oMessageBuf, bool oNa
 
 bool get_x_name(int gameID, int xBytes, int playerX, char *xMessageBuf, bool xNameAssigned);
 
-
 bool get_move(char player, int socket, int otherplayersock, char board[3][3], bool gameOver);
 
 void get_options(char player, int socket, char *cmdBuf);
@@ -50,11 +49,8 @@ typedef struct players {
     int gameID; // Identifies session
     int playerX; // Socket number
     char xName[BUFSIZE];
-    char xInitial[1];
     int playerO; // Socket number
     char oName[BUFSIZE];
-    char oInitial[1];
-
 } players;
 
 players *tttArray;
@@ -93,11 +89,6 @@ int main(int argc, char **argv) {
             printf("Got 2 players!\n");
             tttArray[sessionIndex].gameID = sessionIndex;
             tttArray[sessionIndex].playerX = playerSocket[currSocket - 1];
-            if (currSocket == 0 || currSocket % 2 == 0) {
-                strcpy(tttArray[sessionIndex].xInitial, "X");
-            } else {
-                strcpy(tttArray[sessionIndex].oInitial, "O");
-            }
             tttArray[sessionIndex].playerO = playerSocket[currSocket];
 
             pthread_t t;
