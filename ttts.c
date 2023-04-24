@@ -20,7 +20,7 @@
 
 #define SOCKETERROR (-1)
 #define QUEUE_SIZE 8
-#define BUFSIZE 4096
+#define BUFSIZE 255
 
 volatile int active = 1;
 
@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
     struct sockaddr_storage remote_host;
     socklen_t remote_host_len;
 
-    char *service = argc == 2 ? argv[1] : "16059";
+    char *service = argc == 2 ? argv[1] : "16000";
 
     tttArray = malloc(50 * sizeof(*tttArray)); // Max 50 sessions w/ a max of two players in each session.
 
