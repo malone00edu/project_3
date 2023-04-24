@@ -674,7 +674,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
     printf("MOVE|%lu|%c|%s|\n", strlen(movebuf) + 3, player, movebuf);
     char serverMsg[] = "MOVD|";
     char package[BUFSIZE];
-    char content[BUFSIZE];
+    char content[1000];
     memset(package, 0, BUFSIZE * sizeof(char));
     memset(content, 0, BUFSIZE * sizeof(char));
     sprintf(content, "%ld|%c|%s|%s|\n", strlen(movebuf) + strlen(boardString) + 4, player, movebuf, boardString);
