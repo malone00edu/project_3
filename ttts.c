@@ -240,9 +240,9 @@ void *ttt_session(void *sessionID) {
     memset(xMessageBuf, 0, BUFSIZE);
 
 
-    char board[3][3] = {{' ', ' ', ' '},
-                        {' ', ' ', ' '},
-                        {' ', ' ', ' '}};
+    char board[3][3] = {{'.', '.', '.'},
+                        {'.', '.', '.'},
+                        {'.', '.', '.'}};
 
 
     //write code to send a blank board to the clients here
@@ -405,7 +405,7 @@ void *ttt_session(void *sessionID) {
             printf("RSGN|%d|O|\n", 2);
             memset(package, 0, BUFSIZE * sizeof(char));
             memset(content, 0, BUFSIZE * sizeof(char));
-            sprintf(content, "%lu|%s", strlen(loseLINE) - 1, loseLINE);
+            sprintf(content, "%lu|%s", strlen(loseRSGN) - 1, loseRSGN);
             strcat(package, serverMsgO);
             strcat(package, content);
             check(write(playerOSocket, package, strlen(package)), "Send failed");
@@ -644,7 +644,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
         movebuf[strlen(movebuf) - 1] = '\0';
         int row = 0, col = 0;
         if (sscanf(movebuf, "%d,%d", &row, &col) != 2 || row < 1 || row > 3 || col < 1 || col > 3 ||
-            board[row - 1][col - 1] != ' ') {
+            board[row - 1][col - 1] != '.') {
             memset(package, 0, BUFSIZE * sizeof(char));
             memset(content, 0, BUFSIZE * sizeof(char));
             char serverMsg2[] = "INVL|";
@@ -662,7 +662,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
             validMove = true;
             //updates board
             sprintf(boardString,
-                    "\n   1   2   3\n1  %c | %c | %c \n  ---+---+---\n2  %c | %c | %c \n  ---+---+---\n3  %c | %c | %c \n",
+                    "%c%c%c%c%c%c%c%c%c",
                     board[0][0], board[0][1], board[0][2],
                     board[1][0], board[1][1], board[1][2],
                     board[2][0], board[2][1], board[2][2]);
@@ -710,12 +710,12 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
     char content[BUFSIZE];
     memset(package, 0, BUFSIZE * sizeof(char));
     memset(content, 0, BUFSIZE * sizeof(char));
-    sprintf(content, "%ld|%c|%s|", strlen(movebuf) + 3, player, movebuf);
+    sprintf(content, "%ld|%c|%s|%s|\n", strlen(movebuf) + strlen(boardString) + 4, player, movebuf, boardString);
     strcat(package, serverMsg);
     strcat(package, content);
     check(write(socket, package, strlen(package)), "Send failed");
-    check(write(socket, boardString, strlen(boardString)), "Send failed");
-    check(write(otherplayersock, boardString, strlen(boardString)), "Send failed");
+    //check(write(socket, boardString, strlen(boardString)), "Send failed");
+    check(write(otherplayersock, package, strlen(package)), "Send failed");
     return gameOver;
 }
 
