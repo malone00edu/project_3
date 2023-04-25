@@ -61,6 +61,7 @@ typedef struct game {
 game *tttArray;
 char **playerInPoolArr;
 
+
 int main(int argc, char **argv) {
 
     struct sockaddr_storage remote_host;
