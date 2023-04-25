@@ -264,8 +264,10 @@ void *ttt_session(void *sessionID) {
 // Initialize the game over flag
     bool gameOver = false;
 
-    fcntl(playerXSocket, F_SETFL, flagsX);
-    fcntl(playerOSocket, F_SETFL, flagsO);
+   fcntl(playerXSocket, F_SETFL, flagsX | O_NONBLOCK);
+   fcntl(playerOSocket, F_SETFL, flagsO | O_NONBLOCK);
+
+
 // Loop until the game is over
 
     char winLINE[] = "W|You've won! Reason: By completing a line.|\n";
@@ -500,6 +502,8 @@ bool reqDraw(int socket, int otherplayersock) {
 
     bool acceptDraw = false;
 
+    bool msgsent=false;
+
     char optionBuf[BUFSIZE];
     while (!validReply) {
 
@@ -509,7 +513,12 @@ bool reqDraw(int socket, int otherplayersock) {
         sprintf(content, "%ld|%s", strlen(updatePlayer2), updatePlayer2);
         strcat(package, serverMsg);
         strcat(package, content);
-        check(write(otherplayersock, package, strlen(package)), "Send failed");
+
+        if (!msgsent){
+            check(write(otherplayersock, package, strlen(package)), "Send failed");
+            msgsent=true;
+        }
+        
 
         memset(optionBuf, 0, BUFSIZE * sizeof(char));
 
@@ -534,7 +543,8 @@ bool reqDraw(int socket, int otherplayersock) {
             sprintf(content, "%ld|%s", strlen(updatePlayerRETRY) - 1, updatePlayerRETRY);
             strcat(package, serverMsgINVL);
             strcat(package, content);
-            check(write(socket, package, strlen(package)), "Send failed");
+            check(write(otherplayersock, package, strlen(package)), "Send failed");
+            msgsent=false;
             continue;
         }
     }
@@ -544,6 +554,8 @@ bool reqDraw(int socket, int otherplayersock) {
 void get_options(char player, int socket, char *cmdBuf) {
     //send options to player X
     bool validCMD = false;
+
+    bool msgsent=false;
 
     while (!validCMD) {
         char package[BUFSIZE];
@@ -555,13 +567,19 @@ void get_options(char player, int socket, char *cmdBuf) {
         sprintf(content, "%lu|%c|%s", strlen(updatePlayer1) + 2, player, updatePlayer1);
         strcat(package, serverMsg1);
         strcat(package, content);
-        check(write(socket, package, strlen(package)), "Send failed");
+
+        if (!msgsent){
+            check(write(socket, package, strlen(package)), "Send failed");
+            msgsent=true;
+        }
+       
 
         //clear buffer
         memset(cmdBuf, 0, BUFSIZE * sizeof(char));
         //if invalid read then reenter
         int bytesReceived = read(socket, cmdBuf, BUFSIZE);
         if (bytesReceived <= 0) {
+            sleep(1);
             continue;
         }
 
@@ -578,6 +596,7 @@ void get_options(char player, int socket, char *cmdBuf) {
             strcat(package, serverMsg2);
             strcat(package, content);
             check(write(socket, package, strlen(package)), "Send failed");
+            msgsent=false;
             continue;
         }
     }
@@ -589,6 +608,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
     bool success = true;
     char movebuf[BUFSIZE];
     char boardString[BUFSIZE];
+    bool msgsent=false;
 
     while (!validMove) {
         char package[BUFSIZE];
@@ -600,7 +620,12 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
         sprintf(content, "%lu|%c|%s", strlen(updatePlayer1) + 2, player, updatePlayer1);
         strcat(package, serverMsg1);
         strcat(package, content);
-        check(write(socket, package, strlen(package)), "Send failed");
+        
+        if(!msgsent){
+            check(write(socket, package, strlen(package)), "Send failed");
+            msgsent=true;
+        }
+        
         // Clear the buffer before receiving input from Player O
         memset(movebuf, 0, BUFSIZE * sizeof(char));
 
@@ -622,6 +647,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
             strcat(package, serverMsg2);
             strcat(package, content);
             check(write(socket, package, strlen(package)), "Send failed");
+            msgsent=false;
         } else {
 
             row--;
