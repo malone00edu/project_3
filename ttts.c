@@ -45,7 +45,7 @@ char *strtrim(char *s);
 
 bool reqDraw(int socket, int otherplayersock);
 
-int playerPool[MAXCLIENTS]; // Total amount of game allowed on the server. (Starts at 0. Using array logic.)
+int playerArrOfSockets[MAXCLIENTS]; // Total amount of game allowed on the server. (Starts at 0. Using array logic.)
 
 typedef struct game {
     int gameID; // Identifies session
@@ -59,8 +59,7 @@ typedef struct game {
 } game;
 
 game *tttArray;
-char **playerInPoolArr;
-
+char **arrOfPlayerNames;
 
 int main(int argc, char **argv) {
 
@@ -69,7 +68,7 @@ int main(int argc, char **argv) {
 
     char *service = argc == 2 ? argv[1] : "16007";
 
-    playerInPoolArr = calloc(MAXCLIENTS, sizeof(char *));
+    arrOfPlayerNames = calloc(MAXCLIENTS, sizeof(char *));
     tttArray = malloc(50 * sizeof(*tttArray)); // Max 50 sessions w/ a max of two game in each session.
 
     for (int i = 0; i < 50; i++) {
@@ -86,7 +85,6 @@ int main(int argc, char **argv) {
     puts("Listening for incoming connections...");
     int currSocket = 0;
     int sessionIndex = 0;
-    int currPlayerCount = 4;
     int initialBytes;
     int lenErrMsg;
 
@@ -103,26 +101,34 @@ int main(int argc, char **argv) {
     memset(content, 0, CONTENTSIZE * sizeof(char));
     memset(package, 0, BUFSIZE * sizeof(char));
 
+    // Initially this is true when the first client socket is accepted.
+    int largestActiveSocket = 4;
+
     while (active) {
         remote_host_len = sizeof(remote_host);
-        check(playerPool[currSocket] = accept(listener, (struct sockaddr *) &remote_host, &remote_host_len),
+        check(playerArrOfSockets[currSocket] = accept(listener, (struct sockaddr *) &remote_host, &remote_host_len),
               "Accept failed");
 
-        //printf("Bytes: %d, %s\n", initialBytes, nameBuf);
+        // Accept reuses lower (closed out sockets) from previous completed games. Test for largest active socket.
+        if (playerArrOfSockets[currSocket] > largestActiveSocket) {
+            largestActiveSocket = playerArrOfSockets[currSocket];
+        }
+
         validName = false;
         while (!validName) {
             nameExist = false;
-            initialBytes = check(read(playerPool[currSocket], nameBuf, BUFSIZE), "Read failed");
+            initialBytes = check(read(playerArrOfSockets[currSocket], nameBuf, BUFSIZE), "Read failed");
             if (initialBytes > 0) {
                 nameBuf[strlen(nameBuf) - 1] = '\0';
-                // Starts at 4 because 0 to 3 is used already. 3 being the server.
-                for (int j = 4; j < currPlayerCount; j++) {
-                    if (strcmp(playerInPoolArr[j], nameBuf) == 0) {
+                // Starts at 4 because 0 to 3 is inuse already.
+                // 0 = STDIN_FILENO, 1 = STDIN_FILENO, 2 = STDERR_FILENO, 3 = The server socket.
+                for (int j = 4; j < largestActiveSocket; j++) {
+                    if (strcmp(arrOfPlayerNames[j], nameBuf) == 0) {
                         lenErrMsg = strlen(invlErrMsg);
                         sprintf(content, "%d|%s", lenErrMsg, invlErrMsg);
                         strcpy(package, "INVL|");
                         strcat(package, content);
-                        check(write(playerPool[currSocket], package, strlen(package)), "Send failed");
+                        check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
                         nameExist = true;
                         memset(nameBuf, 0, BUFSIZE * sizeof(char));
                         memset(content, 0, CONTENTSIZE * sizeof(char));
@@ -131,12 +137,11 @@ int main(int argc, char **argv) {
                     }
                 }
                 if (!nameExist) {
-                    playerInPoolArr[playerPool[currSocket]] = strdup(nameBuf);
-                    printf("NAME|%lu|%s|\n", strlen(nameBuf) + 1, playerInPoolArr[playerPool[currSocket]]);
+                    arrOfPlayerNames[playerArrOfSockets[currSocket]] = strdup(nameBuf);
+                    printf("NAME|%lu|%s|\n", strlen(nameBuf) + 1, arrOfPlayerNames[playerArrOfSockets[currSocket]]);
                     strcpy(package, "WAIT|0|");
-                    check(write(playerPool[currSocket], package, strlen(package)), "Write failed");
+                    check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Write failed");
                     validName = true;
-                    currPlayerCount++;
                     memset(package, 0, BUFSIZE * sizeof(char));
                 }
             }
@@ -145,8 +150,8 @@ int main(int argc, char **argv) {
         if (currSocket % 2 != 0) {
             printf("Got 2 players!\n");
             tttArray[sessionIndex].gameID = sessionIndex;
-            tttArray[sessionIndex].playerX = playerPool[currSocket - 1];
-            tttArray[sessionIndex].playerO = playerPool[currSocket];
+            tttArray[sessionIndex].playerX = playerArrOfSockets[currSocket - 1];
+            tttArray[sessionIndex].playerO = playerArrOfSockets[currSocket];
             tttArray[sessionIndex].firstMoveX = true;
             tttArray[sessionIndex].firstMoveO = true;
 
@@ -164,7 +169,7 @@ int main(int argc, char **argv) {
         currSocket++;
     }
 
-    free(playerInPoolArr);
+    free(arrOfPlayerNames);
     return 0;
 }
 
@@ -270,8 +275,8 @@ void *ttt_session(void *sessionID) {
     check(write(playerOSocket, introBuffO, strlen(introBuffO)), "Send failed");
 
     // Get player X and O's name from pool of array names.
-    get_x_name(gameID, playerInPoolArr[playerXSocket]);
-    get_o_name(gameID, playerInPoolArr[playerOSocket]);
+    get_x_name(gameID, arrOfPlayerNames[playerXSocket]);
+    get_o_name(gameID, arrOfPlayerNames[playerOSocket]);
 
     // Extract playerX's name from struct array.
     char playerXName[BUFSIZE];
