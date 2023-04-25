@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
     struct sockaddr_storage remote_host;
     socklen_t remote_host_len;
 
-    char *service = argc == 2 ? argv[1] : "16007";
+    char *service = argc == 2 ? argv[1] : "16000";
 
     playerInPoolArr = calloc(MAXCLIENTS, sizeof(char *));
     tttArray = malloc(50 * sizeof(*tttArray)); // Max 50 sessions w/ a max of two game in each session.
@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
     char content[CONTENTSIZE];
     char package[BUFSIZE];
 
-    char invlErrMsg[] = "|Player's name is taken. Try again.|";
+    char invlErrMsg[] = "Player's name is taken. Try again.|";
 
     memset(nameBuf, 0, BUFSIZE * sizeof(char));
     memset(content, 0, CONTENTSIZE * sizeof(char));
@@ -112,6 +112,9 @@ int main(int argc, char **argv) {
         validName = false;
         while (!validName) {
             nameExist = false;
+            char namePrompt[]="Enter name:";
+            check(write(playerPool[currSocket], namePrompt, strlen(namePrompt)), "Send failed");
+
             initialBytes = check(read(playerPool[currSocket], nameBuf, BUFSIZE), "Read failed");
             if (initialBytes > 0) {
                 nameBuf[strlen(nameBuf) - 1] = '\0';
@@ -132,7 +135,7 @@ int main(int argc, char **argv) {
                 }
                 if (!nameExist) {
                     playerInPoolArr[playerPool[currSocket]] = strdup(nameBuf);
-                    printf("NAME|%lu|%s|\n", strlen(nameBuf) + 1, playerInPoolArr[playerPool[currSocket]]);
+                    printf("PlAY|%lu|%s|\n", strlen(nameBuf) + 1, playerInPoolArr[playerPool[currSocket]]);
                     strcpy(package, "WAIT|0|");
                     check(write(playerPool[currSocket], package, strlen(package)), "Write failed");
                     validName = true;
@@ -322,8 +325,9 @@ void *ttt_session(void *sessionID) {
 // Initialize the game over flag
     bool gameOver = false;
 
-    fcntl(playerXSocket, F_SETFL, flagsX);
-    fcntl(playerOSocket, F_SETFL, flagsO);
+ 
+   fcntl(playerXSocket, F_SETFL, flagsX | O_NONBLOCK);
+   fcntl(playerOSocket, F_SETFL, flagsO | O_NONBLOCK);
 
     char winLINE[] = "W|You've won! Reason: By completing a line.|\n";
     char loseLINE[] = "L|You've lost. Reason: Other player completed a line.|\n";
@@ -558,6 +562,9 @@ bool reqDraw(int socket, int otherplayersock) {
     check(write(socket, package, strlen(package)), "Send failed");
 
     bool acceptDraw = false;
+    bool msgsent=false;
+
+
     char optionBuf[BUFSIZE];
     while (!validReply) {
 
@@ -567,12 +574,19 @@ bool reqDraw(int socket, int otherplayersock) {
         sprintf(content, "%ld|%s", strlen(updatePlayer2), updatePlayer2);
         strcat(package, serverMsg);
         strcat(package, content);
-        check(write(otherplayersock, package, strlen(package)), "Send failed");
+        
+        if (!msgsent){
+            check(write(otherplayersock, package, strlen(package)), "Send failed");
+            msgsent=true;
+        }
+      
 
 
         memset(optionBuf, 0, BUFSIZE * sizeof(char));
+        
         int bytesReceived = read(otherplayersock, optionBuf, BUFSIZE);
         if (bytesReceived <= 0) {
+            sleep(1);
             continue;
         }
 
@@ -593,6 +607,7 @@ bool reqDraw(int socket, int otherplayersock) {
             strcat(package, serverMsgINVL);
             strcat(package, content);
             check(write(otherplayersock, package, strlen(package)), "Send failed");
+            msgsent=false;
             continue;
         }
     }
@@ -611,6 +626,9 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
     char updatePlayer1[] = "Your options are: move, ff, draw|";
     char serverMsg2[] = "INVL|";
     char updatePlayer2[] = "RETRY|\n";
+
+    bool msgsent=false;
+
     while (!validCMD) {
         if ((socket == tttArray[gameID].playerX) && (tttArray[gameID].firstMoveX)) {
             memset(package, 0, BUFSIZE * sizeof(char));
@@ -636,7 +654,11 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
         strcat(package, serverMsg1);
         strcat(package, content);
 
-        check(write(socket, package, strlen(package)), "Send failed");
+        if (!msgsent){
+            check(write(socket, package, strlen(package)), "Send failed");
+            msgsent=true;
+        }
+
 
         //clear buffer
         memset(cmdBuf, 0, BUFSIZE * sizeof(char));
@@ -658,6 +680,8 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
             strcat(package, serverMsg2);
             strcat(package, content);
             check(write(socket, package, strlen(package)), "Send failed");
+            msgsent=false;
+
             continue;
         }
     }
@@ -669,6 +693,9 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
     char movebuf[BUFSIZE];
     char boardString[BUFSIZE];
 
+    bool msgsent=false;
+
+
     while (!validMove) {
         char package[BUFSIZE];
         char content[CONTENTSIZE];
@@ -679,13 +706,19 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
         sprintf(content, "%lu|%c|%s", strlen(updatePlayer1) + 2, player, updatePlayer1);
         strcat(package, serverMsg1);
         strcat(package, content);
-        check(write(socket, package, strlen(package)), "Send failed");
+
+        if (!msgsent){
+            check(write(socket, package, strlen(package)), "Send failed");
+            msgsent=true;
+        }
+        
 
         // Clear the buffer before receiving input from Player O
         memset(movebuf, 0, BUFSIZE * sizeof(char));
 
         int bytesReceived = read(socket, movebuf, BUFSIZE);
         if (bytesReceived <= 0) {
+            sleep(1);
             continue;
         }
 
@@ -702,6 +735,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
             strcat(package, serverMsg2);
             strcat(package, content);
             check(write(socket, package, strlen(package)), "Send failed");
+            msgsent=false;
 
         } else {
 
