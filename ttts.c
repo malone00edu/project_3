@@ -19,10 +19,9 @@
 
 #define SOCKETERROR (-1)
 #define QUEUE_SIZE 8
-#define BUFSIZE 4096
+#define BUFSIZE 255
 #define MAXCLIENTS 99
 #define CONTENTSIZE 1024
-
 
 volatile int active = 1;
 
@@ -51,11 +50,12 @@ int playerPool[MAXCLIENTS]; // Total amount of game allowed on the server. (Star
 typedef struct game {
     int gameID; // Identifies session
     int playerX; // Socket number
-    bool firstMoveX;
     char xName[BUFSIZE];
+    bool firstMoveX;
     int playerO; // Socket number
-    bool firstMoveO;
     char oName[BUFSIZE];
+    bool firstMoveO;
+
 } game;
 
 game *tttArray;
@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
     struct sockaddr_storage remote_host;
     socklen_t remote_host_len;
 
-    char *service = argc == 2 ? argv[1] : "16006";
+    char *service = argc == 2 ? argv[1] : "16007";
 
     playerInPoolArr = calloc(MAXCLIENTS, sizeof(char *));
     tttArray = malloc(50 * sizeof(*tttArray)); // Max 50 sessions w/ a max of two game in each session.
@@ -103,7 +103,7 @@ int main(int argc, char **argv) {
     memset(content, 0, CONTENTSIZE * sizeof(char));
     memset(package, 0, BUFSIZE * sizeof(char));
 
-    while (true) {
+    while (active) {
         remote_host_len = sizeof(remote_host);
         check(playerPool[currSocket] = accept(listener, (struct sockaddr *) &remote_host, &remote_host_len),
               "Accept failed");
@@ -115,6 +115,7 @@ int main(int argc, char **argv) {
             initialBytes = check(read(playerPool[currSocket], nameBuf, BUFSIZE), "Read failed");
             if (initialBytes > 0) {
                 nameBuf[strlen(nameBuf) - 1] = '\0';
+                // Starts at 4 because 0 to 3 is used already. 3 being the server.
                 for (int j = 4; j < currPlayerCount; j++) {
                     if (strcmp(playerInPoolArr[j], nameBuf) == 0) {
                         lenErrMsg = strlen(invlErrMsg);
@@ -162,6 +163,7 @@ int main(int argc, char **argv) {
         }
         currSocket++;
     }
+
     free(playerInPoolArr);
     return 0;
 }
@@ -241,7 +243,7 @@ void *ttt_session(void *sessionID) {
     assert(gameID != -1);
 
     printf("[After calling pthread_create; getpid: %d, getpthread_self: %lu]\n", getpid(), pthread_self());
-    printf("Session %d is active.\n", tttArray[gameID].gameID);
+    printf("Session %d is active.\n", tttArray[gameID].gameID + 1);
 
     int xBytesReceived = 0, oBytesReceived = 0;
     char xMessageBuf[BUFSIZE], oMessageBuf[BUFSIZE], sMessageBuf[BUFSIZE];
@@ -323,9 +325,6 @@ void *ttt_session(void *sessionID) {
     fcntl(playerXSocket, F_SETFL, flagsX);
     fcntl(playerOSocket, F_SETFL, flagsO);
 
-
-// Loop until the game is over
-
     char winLINE[] = "W|You've won! Reason: By completing a line.|\n";
     char loseLINE[] = "L|You've lost. Reason: Other player completed a line.|\n";
     char loseRSGN[] = "L|You've lost. Reason: Surrendered.|\n";
@@ -340,6 +339,7 @@ void *ttt_session(void *sessionID) {
 
     char serverMsgO[] = "OVER|";
 
+    // Loop until the game is over
     while (!gameOver) {
 
         char package[BUFSIZE];
@@ -394,8 +394,8 @@ void *ttt_session(void *sessionID) {
                 sprintf(content, "%lu|%s", strlen(drawaccept) - 1, drawaccept);
                 strcat(package, serverMsgO);
                 strcat(package, content);
-                check(write(playerXSocket, package, strlen(package)), "Send failed");
-                check(write(playerOSocket, package, strlen(package)), "Send failed");
+                check(send(playerXSocket, package, strlen(package), O_NONBLOCK), "Send failed");
+                check(send(playerOSocket, package, strlen(package), O_NONBLOCK), "Send failed");
                 break;
             } else {
                 //continue the game
@@ -526,6 +526,7 @@ void *ttt_session(void *sessionID) {
     return NULL;
 }
 
+
 char *strtrim(char *s) {
     // Trim leading whitespace
     while (isspace(*s)) {
@@ -557,8 +558,6 @@ bool reqDraw(int socket, int otherplayersock) {
     check(write(socket, package, strlen(package)), "Send failed");
 
     bool acceptDraw = false;
-
-
     char optionBuf[BUFSIZE];
     while (!validReply) {
 
@@ -568,13 +567,10 @@ bool reqDraw(int socket, int otherplayersock) {
         sprintf(content, "%ld|%s", strlen(updatePlayer2), updatePlayer2);
         strcat(package, serverMsg);
         strcat(package, content);
-
-
         check(write(otherplayersock, package, strlen(package)), "Send failed");
 
 
         memset(optionBuf, 0, BUFSIZE * sizeof(char));
-
         int bytesReceived = read(otherplayersock, optionBuf, BUFSIZE);
         if (bytesReceived <= 0) {
             continue;
@@ -616,7 +612,7 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
     char serverMsg2[] = "INVL|";
     char updatePlayer2[] = "RETRY|\n";
     while (!validCMD) {
-        if ((strstr(&player, playerX) != NULL) && tttArray[gameID].firstMoveX) {
+        if ((socket == tttArray[gameID].playerX) && (tttArray[gameID].firstMoveX)) {
             memset(package, 0, BUFSIZE * sizeof(char));
             memset(content, 0, CONTENTSIZE * sizeof(char));
             sprintf(content, "%lu|%c|%s|\n", strlen(otherplayer) + 3, player, otherplayer);
@@ -625,7 +621,7 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
             check(write(socket, package, strlen(package)), "Send failed");
             tttArray[gameID].firstMoveX = false;
         }
-        if ((strstr(&player, playerO) != NULL) && tttArray[gameID].firstMoveO) {
+        if ((socket == tttArray[gameID].playerO) && (tttArray[gameID].firstMoveO)) {
             memset(package, 0, BUFSIZE * sizeof(char));
             memset(content, 0, CONTENTSIZE * sizeof(char));
             sprintf(content, "%lu|%c|%s|\n", strlen(otherplayer) + 2, player, otherplayer);
@@ -768,7 +764,6 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
     strcat(package, serverMsg);
     strcat(package, content);
     check(write(socket, package, strlen(package)), "Send failed");
-    //check(write(socket, boardString, strlen(boardString)), "Send failed");
     check(write(otherplayersock, package, strlen(package)), "Send failed");
     return gameOver;
 }
