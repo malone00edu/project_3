@@ -26,7 +26,7 @@ A buffer "content" is being used to create a message that can be sent to the ser
 
 RUNNING THE CODE:
 
-In a linux environment, call 'make' in the terminal which has the files are stored. Simply start the server with ./server portnumber. If you have your own client feel free to use it, or use the one provided in this folder.
+In a linux environment, compile the program by calling 'make' in this folder terminal. Simply start the server with ./server portnumber. If you have your own client feel free to use it, or use the one provided in this folder.
 
 example)
 ./server 16000
