@@ -62,6 +62,8 @@ Other tests:
  - Check to make sure all the errors display correctly when inputting wrong messages, names that are taken, invalid moves etc.
  - Test what happens when a client disconnects after being matched or game ended (doesn't matter when - at the start of the game, middle, after etc)
   Expected results: Current game session should just stop and memory is freed for future use.
+ - Test what happens when the server closes while the clients are still in the game
+  Expected results: game will end, clients will get kicked out
   
 Of course, this is just bare minimum, in the real-world, we would have more complex measures such as security to protect the user data from being leaked such as their ip/connections, and test the game with slow network connections and verify that the game remains playable etc (perhaps with some sort of network emulator tool).
 
