@@ -64,6 +64,8 @@ Other tests:
   Expected results: Current game session should just stop and memory is freed for future use.
  - Test what happens when the server closes while the clients are still in the game
   Expected results: game will end, clients will get kicked out
+ - Test if we can reuse player name after the game session ends.
+  Expected results: Should work because game session data is freed after match is ended.
   
 Of course, this is just bare minimum, in the real-world, we would have more complex measures such as security to protect the user data from being leaked such as their ip/connections, and test the game with slow network connections and verify that the game remains playable etc (perhaps with some sort of network emulator tool).
 
