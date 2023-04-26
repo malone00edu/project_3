@@ -60,8 +60,6 @@ Testing performance:
   
 Other tests:
  - Check to make sure all the errors display correctly when inputting wrong messages, names that are taken, invalid moves etc.
- - Test what happens when a client disconnects after being matched or game ended (doesn't matter when - at the start of the game, middle, after etc)
-  Expected results: Current game session should just stop and memory is freed for future use.
  - Test what happens when the server closes while the clients are still in the game
   Expected results: game will end, clients will get kicked out
 
