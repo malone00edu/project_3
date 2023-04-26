@@ -123,10 +123,7 @@ int main(int argc, char **argv) {
 
         validName = false;
         char namePrompt[] = "Enter name:";
-        int sockFlags = fcntl(playerArrOfSockets[currSocket], F_GETFL);
-        fcntl(playerArrOfSockets[currSocket], F_SETFL, sockFlags | O_NONBLOCK);
         check(write(playerArrOfSockets[currSocket], namePrompt, strlen(namePrompt)), "Send failed");
-        //fcntl(playerArrOfSockets[currSocket], F_SETFL, sockFlags);
         while (!validName) {
             nameExist = false;
             initialBytes = check(read(playerArrOfSockets[currSocket], nameBuf, BUFSIZE), "Read failed");
@@ -588,7 +585,6 @@ void *ttt_session(void *sessionID) {
     close(playerOSocket);
     return NULL;
 }
-
 
 char *strtrim(char *s) {
     // Trim leading whitespace
