@@ -643,7 +643,7 @@ bool reqDraw(int socket, int otherplayersock) {
         memset(optionBuf, 0, BUFSIZE * sizeof(char));
         int bytesReceived = read(otherplayersock, optionBuf, BUFSIZE);
         if (bytesReceived <= 0) {
-            sleep(1);
+            sleep(((unsigned int) 0.1));
             continue;
         }
 
@@ -720,7 +720,7 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
         //if invalid read then reenter
         int bytesReceived = read(socket, cmdBuf, BUFSIZE);
         if (bytesReceived <= 0) {
-            sleep(1);
+            sleep(((unsigned int) 0.1));
             continue;
         }
 
@@ -773,7 +773,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
         int bytesReceived = read(socket, movebuf, BUFSIZE);
 
         if (bytesReceived <= 0) {
-            sleep(1);
+            sleep(((unsigned int) 0.1));
             continue;
         }
 
