@@ -62,11 +62,15 @@ game *tttArray;
 char **arrOfPlayerNames;
 
 int main(int argc, char **argv) {
+    if(argc != 2) {
+        printf("Specify port number.\n");
+        exit(EXIT_FAILURE);
+    }
 
     struct sockaddr_storage remote_host;
     socklen_t remote_host_len;
 
-    char *service = argc == 2 ? argv[1] : "16008";
+    char *service = argv[1];
 
     arrOfPlayerNames = calloc(MAXCLIENTS, sizeof(char *));
     tttArray = malloc(50 * sizeof(*tttArray)); // Max 50 sessions w/ a max of two game in each session.
