@@ -1,7 +1,7 @@
 # project_3
 2023 - Rutgers - cs214 - project3
 
-jn689 & tmb240
+tmb240 & jn689 
 
 INTRO:
 
