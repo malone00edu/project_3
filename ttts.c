@@ -20,7 +20,7 @@
 #define SOCKETERROR (-1)
 #define QUEUE_SIZE 8
 #define BUFSIZE 255
-#define MAXCLIENTS 99
+#define MAXCLIENTS 100
 #define CONTENTSIZE 1024
 
 volatile int active = 1;
@@ -62,7 +62,7 @@ game *tttArray;
 char **arrOfPlayerNames;
 
 int main(int argc, char **argv) {
-    if(argc != 2) {
+    if (argc != 2) {
         printf("Specify port number.\n");
         exit(EXIT_FAILURE);
     }
@@ -99,7 +99,10 @@ int main(int argc, char **argv) {
     char content[CONTENTSIZE];
     char package[BUFSIZE];
 
-    char invlErrMsg[] = "Player's name is taken. Try again.|";
+
+    char invlErrMsg1[] = "Improper name. Try again.|";
+    char invlErrMsg2[] = "Name length is too long. Try again.|";
+    char invlErrMsg3[] = "Player's name is taken. Try again.|";
 
     memset(nameBuf, 0, BUFSIZE * sizeof(char));
     memset(content, 0, CONTENTSIZE * sizeof(char));
@@ -108,7 +111,7 @@ int main(int argc, char **argv) {
     // Initially this is true when the first client socket is accepted.
     int largestActiveSocket = 4;
 
-    while (active) {
+    while (active && largestActiveSocket < 100) {
         remote_host_len = sizeof(remote_host);
         check(playerArrOfSockets[currSocket] = accept(listener, (struct sockaddr *) &remote_host, &remote_host_len),
               "Accept failed");
@@ -119,36 +122,80 @@ int main(int argc, char **argv) {
         }
 
         validName = false;
-        char namePrompt[]="Enter name:";
+        char namePrompt[] = "Enter name:";
+        int sockFlags = fcntl(playerArrOfSockets[currSocket], F_GETFL);
+        fcntl(playerArrOfSockets[currSocket], F_SETFL, sockFlags | O_NONBLOCK);
         check(write(playerArrOfSockets[currSocket], namePrompt, strlen(namePrompt)), "Send failed");
-
+        //fcntl(playerArrOfSockets[currSocket], F_SETFL, sockFlags);
         while (!validName) {
             nameExist = false;
             initialBytes = check(read(playerArrOfSockets[currSocket], nameBuf, BUFSIZE), "Read failed");
             if (initialBytes > 0) {
-                nameBuf[strlen(nameBuf) - 1] = '\0';
-                // Starts at 4 because 0 to 3 is inuse already.
-                // 0 = STDIN_FILENO, 1 = STDIN_FILENO, 2 = STDERR_FILENO, 3 = The server socket.
-                for (int j = 4; j < largestActiveSocket; j++) {
-                    if (strcmp(arrOfPlayerNames[j], nameBuf) == 0) {
-                        lenErrMsg = strlen(invlErrMsg);
-                        sprintf(content, "%d|%s", lenErrMsg, invlErrMsg);
-                        strcpy(package, "INVL|");
-                        strcat(package, content);
-                        check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
-                        nameExist = true;
-                        memset(nameBuf, 0, BUFSIZE * sizeof(char));
-                        memset(content, 0, CONTENTSIZE * sizeof(char));
-                        memset(package, 0, BUFSIZE * sizeof(char));
-                        break;
+                if (nameBuf[strlen(nameBuf) - 1] == '\n') { // Remove '\n' from buffer.
+                    nameBuf[strlen(nameBuf) - 1] = '\0';
+                }
+                // No name consisting of just '\n' or zero in length accepted.
+                if (nameBuf[0] == '\n' || strlen(nameBuf) == 0) {
+                    lenErrMsg = strlen(invlErrMsg1);
+                    sprintf(content, "%d|%s", lenErrMsg, invlErrMsg1);
+                    strcpy(package, "INVL|");
+                    strcat(package, content);
+                    check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
+                    nameExist = true;
+                    memset(nameBuf, 0, BUFSIZE * sizeof(char));
+                    memset(content, 0, CONTENTSIZE * sizeof(char));
+                    memset(package, 0, BUFSIZE * sizeof(char));
+                } else if (strlen(nameBuf) > BUFSIZE) { // Name length is too long.
+                    lenErrMsg = strlen(invlErrMsg2);
+                    sprintf(content, "%d|%s", lenErrMsg, invlErrMsg2);
+                    strcpy(package, "INVL|");
+                    strcat(package, content);
+                    check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
+                    nameExist = true;
+                    memset(nameBuf, 0, BUFSIZE * sizeof(char));
+                    memset(content, 0, CONTENTSIZE * sizeof(char));
+                    memset(package, 0, BUFSIZE * sizeof(char));
+                } else {
+                    for (int i = 0; nameBuf[i] != '\0'; i++) { // No white space characters accepted in name.
+                        if (isspace(nameBuf[i]) != 0) {
+                            lenErrMsg = strlen(invlErrMsg1);
+                            sprintf(content, "%d|%s", lenErrMsg, invlErrMsg1);
+                            strcpy(package, "INVL|");
+                            strcat(package, content);
+                            check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
+                            nameExist = true;
+                            memset(nameBuf, 0, BUFSIZE * sizeof(char));
+                            memset(content, 0, CONTENTSIZE * sizeof(char));
+                            memset(package, 0, BUFSIZE * sizeof(char));
+                            break;
+                        }
+                    }
+                    // Starts at 4 because 0 to 3 is inuse already.
+                    // 0 = STDIN_FILENO, 1 = STDIN_FILENO, 2 = STDERR_FILENO, 3 = The server socket.
+                    for (int j = 4; j < largestActiveSocket; j++) {
+                        if (strcmp(arrOfPlayerNames[j], nameBuf) == 0) {
+                            lenErrMsg = strlen(invlErrMsg3);
+                            sprintf(content, "%d|%s", lenErrMsg, invlErrMsg3);
+                            strcpy(package, "INVL|");
+                            strcat(package, content);
+                            check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
+                            nameExist = true;
+                            memset(nameBuf, 0, BUFSIZE * sizeof(char));
+                            memset(content, 0, CONTENTSIZE * sizeof(char));
+                            memset(package, 0, BUFSIZE * sizeof(char));
+                            break;
+                        }
                     }
                 }
+
                 if (!nameExist) {
                     arrOfPlayerNames[playerArrOfSockets[currSocket]] = strdup(nameBuf);
                     printf("PLAY|%lu|%s|\n", strlen(nameBuf) + 1, arrOfPlayerNames[playerArrOfSockets[currSocket]]);
                     strcpy(package, "WAIT|0|");
                     check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Write failed");
                     validName = true;
+                    memset(nameBuf, 0, BUFSIZE * sizeof(char));
+                    memset(content, 0, CONTENTSIZE * sizeof(char));
                     memset(package, 0, BUFSIZE * sizeof(char));
                 }
             }
@@ -576,7 +623,7 @@ bool reqDraw(int socket, int otherplayersock) {
     bool acceptDraw = false;
     char optionBuf[BUFSIZE];
 
-    bool msgsent=false;
+    bool msgsent = false;
 
     while (!validReply) {
 
@@ -587,11 +634,10 @@ bool reqDraw(int socket, int otherplayersock) {
         strcat(package, serverMsg);
         strcat(package, content);
 
-        if (!msgsent){
+        if (!msgsent) {
             check(write(otherplayersock, package, strlen(package)), "Send failed");
-            msgsent=true;
+            msgsent = true;
         }
-      
 
 
         memset(optionBuf, 0, BUFSIZE * sizeof(char));
@@ -618,7 +664,7 @@ bool reqDraw(int socket, int otherplayersock) {
             strcat(package, serverMsgINVL);
             strcat(package, content);
             check(write(otherplayersock, package, strlen(package)), "Send failed");
-            msgsent=false;
+            msgsent = false;
             continue;
         }
     }
@@ -636,7 +682,7 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
     char serverMsg2[] = "INVL|";
     char updatePlayer2[] = "RETRY|\n";
 
-    bool msgsent=false;
+    bool msgsent = false;
 
     while (!validCMD) {
         if ((socket == tttArray[gameID].playerX) && (tttArray[gameID].firstMoveX)) {
@@ -663,11 +709,11 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
         strcat(package, serverMsg1);
         strcat(package, content);
 
-        if (!msgsent){
+        if (!msgsent) {
             check(write(socket, package, strlen(package)), "Send failed");
-            msgsent=true;
+            msgsent = true;
         }
-        
+
 
         //clear buffer
         memset(cmdBuf, 0, BUFSIZE * sizeof(char));
@@ -689,7 +735,7 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
             strcat(package, serverMsg2);
             strcat(package, content);
             check(write(socket, package, strlen(package)), "Send failed");
-            msgsent=false;
+            msgsent = false;
 
             continue;
         }
@@ -702,7 +748,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
     char movebuf[BUFSIZE];
     char boardString[BUFSIZE];
 
-    bool msgsent=false;
+    bool msgsent = false;
 
     while (!validMove) {
         char package[BUFSIZE];
@@ -715,11 +761,11 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
         strcat(package, serverMsg1);
         strcat(package, content);
 
-        if (!msgsent){
+        if (!msgsent) {
             check(write(socket, package, strlen(package)), "Send failed");
-            msgsent=true;
+            msgsent = true;
         }
-        
+
 
         // Clear the buffer before receiving input from Player O
         memset(movebuf, 0, BUFSIZE * sizeof(char));
@@ -744,7 +790,7 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
             strcat(package, serverMsg2);
             strcat(package, content);
             check(write(socket, package, strlen(package)), "Send failed");
-            msgsent=false;
+            msgsent = false;
 
         } else {
 
