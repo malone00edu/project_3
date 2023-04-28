@@ -23,27 +23,36 @@
 #define MAXCLIENTS 100
 #define CONTENTSIZE 1024
 
-volatile int active = 1;
+static volatile sig_atomic_t active = 1;
+
+// Initially this is true before first client socket is accepted.
+int largestActiveSocket = 3;
 
 void install_handlers(void);
+
+void pthread_sig_func(int sig);
 
 int open_listener(char *service, int queue_size);
 
 void *ttt_session(void *);
 
-int check(int exp, const char *msg);
+int check(int status, const char *msg);
+
+int check_session(int status, const char *msg, int gameID);
 
 void get_o_name(int gameID, char *playerXPoolName);
 
 void get_x_name(int gameID, char *playerOPoolName);
 
-bool get_move(char player, int socket, int otherplayersock, char board[3][3], bool gameOver);
+bool get_move(char player, int socket, int otherplayersock, char board[3][3], bool gameOver, int gameID);
 
-void get_options(char player, int socket, int gameID, char *otherplayer, char *cmdBuf);
+void get_options(char player, int socket, int gameID, int otherplayersock, char *cmdBuf);
 
 char *strtrim(char *s);
 
-bool reqDraw(int socket, int otherplayersock);
+bool reqDraw(int socket, int otherplayersock, int gameID);
+
+void clean_up_session(int socket, int otherplayersock);
 
 int playerArrOfSockets[MAXCLIENTS]; // Total amount of game allowed on the server. (Starts at 0. Using array logic.)
 
@@ -62,6 +71,7 @@ game *tttArray;
 char **arrOfPlayerNames;
 
 int main(int argc, char **argv) {
+    signal(SIGPIPE, SIG_IGN);
     if (argc != 2) {
         printf("Specify port number.\n");
         exit(EXIT_FAILURE);
@@ -108,13 +118,10 @@ int main(int argc, char **argv) {
     memset(content, 0, CONTENTSIZE * sizeof(char));
     memset(package, 0, BUFSIZE * sizeof(char));
 
-    // Initially this is true when the first client socket is accepted.
-    int largestActiveSocket = 4;
-
-    while (active && largestActiveSocket < 100) {
+    while (active) {
         remote_host_len = sizeof(remote_host);
         check(playerArrOfSockets[currSocket] = accept(listener, (struct sockaddr *) &remote_host, &remote_host_len),
-              "Accept failed");
+              "Accept failed.");
 
         // Accept reuses lower (closed out sockets) from previous completed games. Test for largest active socket.
         if (playerArrOfSockets[currSocket] > largestActiveSocket) {
@@ -159,7 +166,8 @@ int main(int argc, char **argv) {
                             sprintf(content, "%d|%s", lenErrMsg, invlErrMsg1);
                             strcpy(package, "INVL|");
                             strcat(package, content);
-                            check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
+                            check(write(playerArrOfSockets[currSocket], package, strlen(package)),
+                                  "Send failed");
                             nameExist = true;
                             memset(nameBuf, 0, BUFSIZE * sizeof(char));
                             memset(content, 0, CONTENTSIZE * sizeof(char));
@@ -175,7 +183,8 @@ int main(int argc, char **argv) {
                             sprintf(content, "%d|%s", lenErrMsg, invlErrMsg3);
                             strcpy(package, "INVL|");
                             strcat(package, content);
-                            check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
+                            check(write(playerArrOfSockets[currSocket], package, strlen(package)),
+                                  "Send failed");
                             nameExist = true;
                             memset(nameBuf, 0, BUFSIZE * sizeof(char));
                             memset(content, 0, CONTENTSIZE * sizeof(char));
@@ -209,30 +218,82 @@ int main(int argc, char **argv) {
             pthread_t t;
             int *sessionID = malloc(sizeof(int));
             *sessionID = tttArray[sessionIndex].gameID;
+            signal(SIGPIPE, SIG_IGN);
+            signal(SIGINT, pthread_sig_func);
             if (pthread_create(&t, NULL, ttt_session, (void *) sessionID) != 0) {
                 perror("Could not create thread");
                 exit(1);
             }
+            //sleep(1);
+            //pthread_kill(t, SIGINT);
+            pthread_join(t, NULL);
             sessionIndex++;
         } else {
             printf("Waiting for 2nd player...\n");
         }
         currSocket++;
     }
-
     free(arrOfPlayerNames);
     return 0;
 }
 
 // Check if errno was set to -1
-int check(int exp, const char *msg) {
-    if (exp == SOCKETERROR && errno == EWOULDBLOCK) {
+int check(int status, const char *msg) {
+    if (status == SOCKETERROR && errno == EWOULDBLOCK) {
         sleep((unsigned int) 0.1);
-    } else if (exp == SOCKETERROR) {
+    } else if (status == SOCKETERROR && errno == EINTR) {
+        char terminalMsg1[] = "\n[Interrupt signal detected. Shutting down server.]\n";
+        write(1, terminalMsg1, sizeof(terminalMsg1));
+        //free(arrOfPlayerNames);
+        exit(0);
+    } else if ((status == SOCKETERROR && errno == EPIPE) || status == 0) {
+        char terminalMsg2[] = "\n[A player not connected.]\n";
+        char terminalMsg3[] = "[This session is closed.]\n";
+        write(1, terminalMsg2, sizeof(terminalMsg2));
+        write(1, terminalMsg3, sizeof(terminalMsg3));
+    } else if (status == SOCKETERROR) {
         perror(msg);
         exit(1);
     }
-    return exp;
+    return status;
+}
+
+// Check if errno was set to -1 in ttt_session
+int check_session(int status, const char *msg, int gameID) {
+    int session = gameID + 1;
+    if (status == SOCKETERROR && errno == EWOULDBLOCK) {
+        sleep((unsigned int) 0.1);
+    } else if (status == SOCKETERROR && errno == EINTR) {
+        char terminalMsg1[] = "\n[Interrupt signal detected. Shutting down server.]\n";
+        write(1, terminalMsg1, sizeof(terminalMsg1));
+        //free(arrOfPlayerNames);
+        exit(0);
+    } else if ((status == SOCKETERROR && errno == EPIPE) || status == 0) {
+        char package[BUFSIZE];
+        memset(package, 0, BUFSIZE * sizeof(char));
+        char terminalMsg2[] = "\n[A is player not connected to the server.]\n";
+        char terminalMsg3[] = "[Session ";
+        char terminalMsg4[] = " is closed.]\n";
+        sprintf(package, "%s%s%d%s", terminalMsg2, terminalMsg3, session, terminalMsg4);
+        write(1, package, sizeof(package));
+        //write(1,terminalMsg3, sizeof(terminalMsg3));
+    } else if (status == SOCKETERROR) {
+        perror(msg);
+        exit(1);
+    }
+    return status;
+}
+
+
+void pthread_sig_func(int sig) {
+    char terminalMsg[] = "\n[Interrupt signal detected. Shutting down server.]\n";
+    char clientMsg[] = "\n[Server is shutting down. Ending this session.]\n";
+    write(1, terminalMsg, sizeof(terminalMsg));
+    for (int i = 4; i <= largestActiveSocket; i++) {
+        write(i, clientMsg, sizeof(clientMsg));
+        close(i);
+    }
+    exit(0);
 }
 
 void handler(int signum) {
@@ -299,13 +360,14 @@ int open_listener(char *service, int queue_size) {
 void *ttt_session(void *sessionID) {
     int gameID = *((int *) sessionID);
     assert(gameID != -1);
+    free(sessionID);
+    int socketStatus;
 
     printf("[After calling pthread_create; getpid: %d, getpthread_self: %lu]\n", getpid(), pthread_self());
     printf("Session %d is active.\n", tttArray[gameID].gameID + 1);
 
-    int xBytesReceived = 0, oBytesReceived = 0;
+
     char xMessageBuf[BUFSIZE], oMessageBuf[BUFSIZE], sMessageBuf[BUFSIZE];
-    bool xNameAssigned = false, oNameAssigned = false;
     int playerXSocket = tttArray[gameID].playerX; // Player X's socket number
     int playerOSocket = tttArray[gameID].playerO; // player O's socket number
     int flagsX = fcntl(playerXSocket, F_GETFL);
@@ -323,9 +385,33 @@ void *ttt_session(void *sessionID) {
     char introBuffO[] = "\nWelcome player O!\n\nYou will go 2nd.\nIf there is any wait time, then player X is deciding,\n"
                         "or a connection has been dropped. =/ (You will be alerted.)";
 
+    char testBuf[1];
+    int testXActive;
+    int testOActive;
+    memset(testBuf, 0, 1 * sizeof(char));
+    testXActive = check(read(playerXSocket, testBuf, sizeof(testBuf)), "Read failed");
+    if ((testXActive == SOCKETERROR && errno == EPIPE) || testXActive == 0) {
+        clean_up_session(playerXSocket, playerOSocket);
+        pthread_exit(NULL);
+    }
+    memset(testBuf, 0, 1 * sizeof(char));
+    testOActive = check(read(playerOSocket, testBuf, sizeof(testBuf)), "Read failed");
+    if ((testOActive == SOCKETERROR && errno == EPIPE) || testOActive == 0) {
+        clean_up_session(playerOSocket, playerXSocket);
+        pthread_exit(NULL);
+    }
+
     // Greet players.
-    check(write(playerXSocket, introBuffX, strlen(introBuffX)), "Send failed");
-    check(write(playerOSocket, introBuffO, strlen(introBuffO)), "Send failed");
+    socketStatus = check_session(write(playerXSocket, introBuffX, strlen(introBuffX)), "Send failed", gameID);
+    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+        clean_up_session(playerXSocket, playerXSocket);
+        pthread_exit(NULL);
+    }
+    socketStatus = check_session(write(playerOSocket, introBuffO, strlen(introBuffO)), "Send failed", gameID);
+    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+        clean_up_session(playerXSocket, playerXSocket);
+        pthread_exit(NULL);
+    }
 
     // Get player X and O's name from pool of array names.
     get_x_name(gameID, arrOfPlayerNames[playerXSocket]);
@@ -349,12 +435,20 @@ void *ttt_session(void *sessionID) {
 
     strcpy(oMessageBuf, sessionMsg);
     strcat(oMessageBuf, playerXName);
-    check(write(playerOSocket, oMessageBuf, strlen(oMessageBuf)), "Send failed");
+    socketStatus = check_session(write(playerOSocket, oMessageBuf, strlen(oMessageBuf)), "Send failed", gameID);
+    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+        clean_up_session(playerXSocket, playerXSocket);
+        pthread_exit(NULL);
+    }
     memset(oMessageBuf, 0, BUFSIZE);
 
     strcpy(xMessageBuf, sessionMsg);
     strcat(xMessageBuf, playerOName);
-    check(write(playerXSocket, xMessageBuf, strlen(xMessageBuf)), "Send failed");
+    socketStatus = check_session(write(playerXSocket, xMessageBuf, strlen(xMessageBuf)), "Send failed", gameID);
+    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+        clean_up_session(playerXSocket, playerXSocket);
+        pthread_exit(NULL);
+    }
     memset(xMessageBuf, 0, BUFSIZE);
 
 
@@ -371,8 +465,16 @@ void *ttt_session(void *sessionID) {
             board[1][0], board[1][1], board[1][2],
             board[2][0], board[2][1], board[2][2]);
 
-    check(write(playerXSocket, boardString, strlen(boardString)), "Send failed");
-    check(write(playerOSocket, boardString, strlen(boardString)), "Send failed");
+    socketStatus = check_session(write(playerXSocket, boardString, strlen(boardString)), "Send failed", gameID);
+    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+        clean_up_session(playerXSocket, playerXSocket);
+        pthread_exit(NULL);
+    }
+    socketStatus = check_session(write(playerOSocket, boardString, strlen(boardString)), "Send failed", gameID);
+    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+        clean_up_session(playerXSocket, playerXSocket);
+        pthread_exit(NULL);
+    }
 
     //create loop here that will get move from player x first then player o
     //write code here
@@ -406,24 +508,32 @@ void *ttt_session(void *sessionID) {
         memset(content, 0, CONTENTSIZE * sizeof(char));
         char cmd[BUFSIZE];
 
-        get_options('X', playerXSocket, gameID, tttArray[gameID].oName, cmd);
+        get_options('X', playerXSocket, gameID, playerOSocket, cmd);
 
         if (strcmp(cmd, "move") == 0) {
             // Get a move from player X
-            gameOver = get_move('X', playerXSocket, playerOSocket, board, gameOver);
+            gameOver = get_move('X', playerXSocket, playerOSocket, board, gameOver, gameID);
             if (gameOver) {
                 memset(package, 0, BUFSIZE * sizeof(char));
                 memset(content, 0, CONTENTSIZE * sizeof(char));
                 sprintf(content, "%lu|%s", strlen(winLINE) - 1, winLINE);
                 strcat(package, serverMsgO);
                 strcat(package, content);
-                check(write(playerXSocket, package, strlen(package)), "Send failed");
+                socketStatus = check_session(write(playerXSocket, package, strlen(package)), "Send failed", gameID);
+                if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
                 memset(package, 0, BUFSIZE * sizeof(char));
                 memset(content, 0, CONTENTSIZE * sizeof(char));
                 sprintf(content, "%lu|%s", strlen(loseLINE) - 1, loseLINE);
                 strcat(package, serverMsgO);
                 strcat(package, content);
-                check(write(playerOSocket, package, strlen(package)), "Send failed");
+                socketStatus = check_session(write(playerOSocket, package, strlen(package)), "Send failed", gameID);
+                if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
                 break;
             }
             rounds++;
@@ -434,17 +544,25 @@ void *ttt_session(void *sessionID) {
             sprintf(content, "%lu|%s", strlen(loseRSGN) - 1, loseRSGN);
             strcat(package, serverMsgO);
             strcat(package, content);
-            check(write(playerXSocket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(playerXSocket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(playerXSocket, playerOSocket);
+                pthread_exit(NULL);
+            }
             memset(package, 0, BUFSIZE * sizeof(char));
             memset(content, 0, CONTENTSIZE * sizeof(char));
             sprintf(content, "%lu|%s", strlen(xFF) - 1, xFF);
             strcat(package, serverMsgO);
             strcat(package, content);
-            check(write(playerOSocket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(playerOSocket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(playerXSocket, playerOSocket);
+                pthread_exit(NULL);
+            }
             break;
         } else {
             printf("DRAW|%d|S|\n", 2);
-            bool acceptDraw = reqDraw(playerXSocket, playerOSocket);
+            bool acceptDraw = reqDraw(playerXSocket, playerOSocket, gameID);
             if (acceptDraw) {
                 printf("DRAW|%d|A|\n", 2);
                 memset(package, 0, BUFSIZE * sizeof(char));
@@ -452,8 +570,32 @@ void *ttt_session(void *sessionID) {
                 sprintf(content, "%lu|%s", strlen(drawaccept) - 1, drawaccept);
                 strcat(package, serverMsgO);
                 strcat(package, content);
-                check(send(playerXSocket, package, strlen(package), O_NONBLOCK), "Send failed");
-                check(send(playerOSocket, package, strlen(package), O_NONBLOCK), "Send failed");
+
+                memset(testBuf, 0, 1 * sizeof(char));
+                testXActive = check(read(playerXSocket, testBuf, sizeof(testBuf)), "Read failed");
+                if ((testXActive == SOCKETERROR && errno == EPIPE) || testXActive == 0) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
+                memset(testBuf, 0, 1 * sizeof(char));
+                testOActive = check(read(playerOSocket, testBuf, sizeof(testBuf)), "Read failed");
+                if ((testOActive == SOCKETERROR && errno == EPIPE) || testOActive == 0) {
+                    clean_up_session(playerOSocket, playerXSocket);
+                    pthread_exit(NULL);
+                }
+
+                int socketStatusX = check_session(write(playerXSocket, package, strlen(package)), "Send failed",
+                                                  gameID);
+                if (socketStatusX == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
+                int socketStatusO = check_session(write(playerOSocket, package, strlen(package)), "Send failed",
+                                                  gameID);
+                if (socketStatusO == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
                 break;
             } else {
                 //continue the game
@@ -463,22 +605,34 @@ void *ttt_session(void *sessionID) {
                 sprintf(content, "%lu|%s", strlen(drawreject) - 1, drawreject);
                 strcat(package, serverMsgO);
                 strcat(package, content);
-                check(write(playerXSocket, package, strlen(package)), "Send failed");
+                socketStatus = check_session(write(playerXSocket, package, strlen(package)), "Send failed", gameID);
+                if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
 
-                gameOver = get_move('X', playerXSocket, playerOSocket, board, gameOver);
+                gameOver = get_move('X', playerXSocket, playerOSocket, board, gameOver, gameID);
                 if (gameOver) {
                     memset(package, 0, BUFSIZE * sizeof(char));
                     memset(content, 0, CONTENTSIZE * sizeof(char));
                     sprintf(content, "%lu|%s", strlen(winLINE) - 1, winLINE);
                     strcat(package, serverMsgO);
                     strcat(package, content);
-                    check(write(playerXSocket, package, strlen(package)), "Send failed");
+                    socketStatus = check_session(write(playerXSocket, package, strlen(package)), "Send failed", gameID);
+                    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                        clean_up_session(playerXSocket, playerOSocket);
+                        pthread_exit(NULL);
+                    }
                     memset(package, 0, BUFSIZE * sizeof(char));
                     memset(content, 0, CONTENTSIZE * sizeof(char));
                     sprintf(content, "%lu|%s", strlen(loseLINE) - 1, loseLINE);
                     strcat(package, serverMsgO);
                     strcat(package, content);
-                    check(write(playerOSocket, package, strlen(package)), "Send failed");
+                    socketStatus = check_session(write(playerOSocket, package, strlen(package)), "Send failed", gameID);
+                    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                        clean_up_session(playerXSocket, playerOSocket);
+                        pthread_exit(NULL);
+                    }
                     break;
                 }
                 rounds++;
@@ -492,30 +646,46 @@ void *ttt_session(void *sessionID) {
             sprintf(content, "%lu|%s", strlen(draw) - 1, draw);
             strcat(package, serverMsgO);
             strcat(package, content);
-            check(write(playerXSocket, package, strlen(package)), "Send failed");
-            check(write(playerOSocket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(playerXSocket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(playerXSocket, playerOSocket);
+                pthread_exit(NULL);
+            }
+            socketStatus = check_session(write(playerOSocket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(playerOSocket, playerXSocket);
+                pthread_exit(NULL);
+            }
             break;
         }
 
         //do the same for player O
-        get_options('O', playerOSocket, gameID, tttArray[gameID].xName, cmd);
+        get_options('O', playerOSocket, gameID, playerXSocket, cmd);
 
         if (strcmp(cmd, "move") == 0) {
             // Get a move from player X
-            gameOver = get_move('O', playerOSocket, playerXSocket, board, gameOver);
+            gameOver = get_move('O', playerOSocket, playerXSocket, board, gameOver, gameID);
             if (gameOver) {
                 memset(package, 0, BUFSIZE * sizeof(char));
                 memset(content, 0, CONTENTSIZE * sizeof(char));
                 sprintf(content, "%lu|%s", strlen(winLINE) - 1, winLINE);
                 strcat(package, serverMsgO);
                 strcat(package, content);
-                check(write(playerOSocket, package, strlen(package)), "Send failed");
+                socketStatus = check_session(write(playerOSocket, package, strlen(package)), "Send failed", gameID);
+                if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerOSocket, playerXSocket);
+                    pthread_exit(NULL);
+                }
                 memset(package, 0, BUFSIZE * sizeof(char));
                 memset(content, 0, CONTENTSIZE * sizeof(char));
                 sprintf(content, "%lu|%s", strlen(loseLINE) - 1, loseLINE);
                 strcat(package, serverMsgO);
                 strcat(package, content);
-                check(write(playerXSocket, package, strlen(package)), "Send failed");
+                socketStatus = check_session(write(playerXSocket, package, strlen(package)), "Send failed", gameID);
+                if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerOSocket, playerXSocket);
+                    pthread_exit(NULL);
+                }
                 break;
             }
             rounds++;
@@ -526,17 +696,25 @@ void *ttt_session(void *sessionID) {
             sprintf(content, "%lu|%s", strlen(loseRSGN) - 1, loseRSGN);
             strcat(package, serverMsgO);
             strcat(package, content);
-            check(write(playerOSocket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(playerOSocket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(playerOSocket, playerXSocket);
+                pthread_exit(NULL);
+            }
             memset(package, 0, BUFSIZE * sizeof(char));
             memset(content, 0, CONTENTSIZE * sizeof(char));
             sprintf(content, "%lu|%s", strlen(oFF) - 1, oFF);
             strcat(package, serverMsgO);
             strcat(package, content);
-            check(write(playerXSocket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(playerXSocket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(playerOSocket, playerXSocket);
+                pthread_exit(NULL);
+            }
             break;
         } else {
             printf("DRAW|%d|S|\n", 2);
-            bool acceptDraw = reqDraw(playerOSocket, playerXSocket);
+            bool acceptDraw = reqDraw(playerOSocket, playerXSocket, gameID);
             if (acceptDraw) {
                 memset(package, 0, BUFSIZE * sizeof(char));
                 memset(content, 0, CONTENTSIZE * sizeof(char));
@@ -544,8 +722,33 @@ void *ttt_session(void *sessionID) {
                 strcat(package, serverMsgO);
                 strcat(package, content);
                 printf("DRAW|%d|A|\n", 2);
-                check(write(playerOSocket, package, strlen(package)), "Send failed");
-                check(write(playerXSocket, package, strlen(package)), "Send failed");
+                char testBuf[1];
+
+                memset(testBuf, 0, 1 * sizeof(char));
+                int testXActive = check(read(playerOSocket, testBuf, sizeof(testBuf)), "Read failed");
+                if ((testXActive == SOCKETERROR && errno == EPIPE) || testXActive == 0) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
+                memset(testBuf, 0, 1 * sizeof(char));
+                int testOActive = check(read(playerXSocket, testBuf, sizeof(testBuf)), "Read failed");
+                if ((testOActive == SOCKETERROR && errno == EPIPE) || testOActive == 0) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
+
+                int socketStatusO = check_session(write(playerOSocket, package, strlen(package)), "Send failed",
+                                                  gameID);
+                if (socketStatusO == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
+                int socketStatusX = check_session(write(playerXSocket, package, strlen(package)), "Send failed",
+                                                  gameID);
+                if (socketStatusX == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerXSocket, playerOSocket);
+                    pthread_exit(NULL);
+                }
                 break;
             } else {
                 //continue the game
@@ -555,22 +758,34 @@ void *ttt_session(void *sessionID) {
                 strcat(package, serverMsgO);
                 strcat(package, content);
                 printf("DRAW|%d|R|\n", 2);
-                check(write(playerOSocket, package, strlen(package)), "Send failed");
+                socketStatus = check_session(write(playerOSocket, package, strlen(package)), "Send failed", gameID);
+                if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                    clean_up_session(playerOSocket, playerXSocket);
+                    pthread_exit(NULL);
+                }
 
-                gameOver = get_move('O', playerOSocket, playerXSocket, board, gameOver);
+                gameOver = get_move('O', playerOSocket, playerXSocket, board, gameOver, gameID);
                 if (gameOver) {
                     memset(package, 0, BUFSIZE * sizeof(char));
                     memset(content, 0, CONTENTSIZE * sizeof(char));
                     sprintf(content, "%lu|%s", strlen(winLINE) - 1, winLINE);
                     strcat(package, serverMsgO);
                     strcat(package, content);
-                    check(write(playerOSocket, package, strlen(package)), "Send failed");
+                    socketStatus = check_session(write(playerOSocket, package, strlen(package)), "Send failed", gameID);
+                    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                        clean_up_session(playerOSocket, playerXSocket);
+                        pthread_exit(NULL);
+                    }
                     memset(package, 0, BUFSIZE * sizeof(char));
                     memset(content, 0, CONTENTSIZE * sizeof(char));
                     sprintf(content, "%lu|%s", strlen(loseLINE) - 1, loseLINE);
                     strcat(package, serverMsgO);
                     strcat(package, content);
-                    check(write(playerXSocket, package, strlen(package)), "Send failed");
+                    socketStatus = check_session(write(playerXSocket, package, strlen(package)), "Send failed", gameID);
+                    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                        clean_up_session(playerOSocket, playerXSocket);
+                        pthread_exit(NULL);
+                    }
                     break;
                 }
                 rounds++;
@@ -578,7 +793,6 @@ void *ttt_session(void *sessionID) {
         }
     }
 
-    free(sessionID);
     arrOfPlayerNames[playerXSocket][0] = '\0';
     arrOfPlayerNames[playerOSocket][0] = '\0';
     close(playerXSocket);
@@ -602,8 +816,9 @@ char *strtrim(char *s) {
     return s;
 }
 
-bool reqDraw(int socket, int otherplayersock) {
+bool reqDraw(int socket, int otherplayersock, int gameID) {
     bool validReply = false;
+    int socketStatus;
 
     char package[BUFSIZE];
     char content[CONTENTSIZE];
@@ -614,7 +829,11 @@ bool reqDraw(int socket, int otherplayersock) {
     sprintf(content, "%ld|%s", strlen(updatePlayer1), updatePlayer1);
     strcat(package, serverMsg);
     strcat(package, content);
-    check(write(socket, package, strlen(package)), "Send failed");
+    socketStatus = check_session(write(socket, package, strlen(package)), "Send failed", gameID);
+    if (socketStatus == SOCKETERROR && errno == EPIPE) {
+        clean_up_session(socket, otherplayersock);
+        pthread_exit(NULL);
+    }
 
     bool acceptDraw = false;
     char optionBuf[BUFSIZE];
@@ -631,14 +850,21 @@ bool reqDraw(int socket, int otherplayersock) {
         strcat(package, content);
 
         if (!msgsent) {
-            check(write(otherplayersock, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(otherplayersock, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(socket, otherplayersock);
+                pthread_exit(NULL);
+            }
             msgsent = true;
         }
 
 
         memset(optionBuf, 0, BUFSIZE * sizeof(char));
-        int bytesReceived = read(otherplayersock, optionBuf, BUFSIZE);
-        if (bytesReceived <= 0) {
+        int bytesReceived = check_session(read(otherplayersock, optionBuf, BUFSIZE), "Read failed", gameID);
+        if (bytesReceived == 0) {
+            clean_up_session(socket, otherplayersock);
+            pthread_exit(NULL);
+        } else if (bytesReceived < 0) {
             sleep(((unsigned int) 0.1));
             continue;
         }
@@ -659,7 +885,11 @@ bool reqDraw(int socket, int otherplayersock) {
             sprintf(content, "%ld|%s", strlen(updatePlayerRETRY) - 1, updatePlayerRETRY);
             strcat(package, serverMsgINVL);
             strcat(package, content);
-            check(write(otherplayersock, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(otherplayersock, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(socket, otherplayersock);
+                pthread_exit(NULL);
+            }
             msgsent = false;
             continue;
         }
@@ -667,7 +897,7 @@ bool reqDraw(int socket, int otherplayersock) {
     return acceptDraw;
 }
 
-void get_options(char player, int socket, int gameID, char *otherplayer, char *cmdBuf) {
+void get_options(char player, int socket, int gameID, int otherplayersock, char *cmdBuf) {
     //send options to player X
     bool validCMD = false;
     char package[BUFSIZE];
@@ -681,22 +911,31 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
     bool msgsent = false;
 
     while (!validCMD) {
+        int socketStatus;
         if ((socket == tttArray[gameID].playerX) && (tttArray[gameID].firstMoveX)) {
             memset(package, 0, BUFSIZE * sizeof(char));
             memset(content, 0, CONTENTSIZE * sizeof(char));
-            sprintf(content, "%lu|%c|%s|\n", strlen(otherplayer) + 3, player, otherplayer);
+            sprintf(content, "%lu|%c|%s|\n", strlen(tttArray[gameID].oName) + 3, player, tttArray[gameID].oName);
             strcat(package, firstPlayMsg);
             strcat(package, content);
-            check(write(socket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(socket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(socket, otherplayersock);
+                pthread_exit(NULL);
+            }
             tttArray[gameID].firstMoveX = false;
         }
         if ((socket == tttArray[gameID].playerO) && (tttArray[gameID].firstMoveO)) {
             memset(package, 0, BUFSIZE * sizeof(char));
             memset(content, 0, CONTENTSIZE * sizeof(char));
-            sprintf(content, "%lu|%c|%s|\n", strlen(otherplayer) + 2, player, otherplayer);
+            sprintf(content, "%lu|%c|%s|\n", strlen(tttArray[gameID].xName) + 2, player, tttArray[gameID].xName);
             strcat(package, firstPlayMsg);
             strcat(package, content);
-            check(write(socket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(socket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(socket, otherplayersock);
+                pthread_exit(NULL);
+            }
             tttArray[gameID].firstMoveO = false;
         }
         memset(package, 0, BUFSIZE * sizeof(char));
@@ -706,23 +945,25 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
         strcat(package, content);
 
         if (!msgsent) {
-            check(write(socket, package, strlen(package)), "Send failed");
+            check_session(write(socket, package, strlen(package)), "Send failed", gameID);
             msgsent = true;
         }
-
 
         //clear buffer
         memset(cmdBuf, 0, BUFSIZE * sizeof(char));
         //if invalid read then reenter
-        int bytesReceived = read(socket, cmdBuf, BUFSIZE);
-        if (bytesReceived <= 0) {
+        int bytesReceived = check_session(read(socket, cmdBuf, BUFSIZE), "Read failed", gameID);
+        if (bytesReceived == 0) {
+            clean_up_session(socket, otherplayersock);
+            pthread_exit(NULL);
+        } else if (bytesReceived < 0) {
             sleep(((unsigned int) 0.1));
             continue;
         }
 
         char *trimmedBuf = strtrim(cmdBuf);
 
-        if (strcmp(trimmedBuf, "move") == 0 || strcmp(trimmedBuf, "ff") == 0 || strcmp(trimmedBuf, "draw") == 0) {
+        if (strcmp(trimmedBuf, "move") == 0 || strcmp(trimmedBuf, "ff") == 0 || strcmp(trimmedBuf, "draw") == gameID) {
             validCMD = true;
         } else {
             memset(package, 0, BUFSIZE * sizeof(char));
@@ -730,7 +971,11 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
             sprintf(content, "%ld|%s", strlen(updatePlayer2) - 1, updatePlayer2); // Not including '\n' in byte count.
             strcat(package, serverMsg2);
             strcat(package, content);
-            check(write(socket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(socket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(socket, otherplayersock);
+                pthread_exit(NULL);
+            }
             msgsent = false;
 
             continue;
@@ -738,13 +983,23 @@ void get_options(char player, int socket, int gameID, char *otherplayer, char *c
     }
 }
 
-bool get_move(char player, int socket, int otherplayersock, char board[3][3], bool gameOver) {
+void clean_up_session(int socket, int otherplayersock) {
+    char otherPlayerMsg[] = "\n[Your opponent disconnected from the server. Closing session]\n";
+    write(socket, otherPlayerMsg, strlen(otherPlayerMsg));
+    write(otherplayersock, otherPlayerMsg, strlen(otherPlayerMsg));
+    arrOfPlayerNames[socket][0] = '\0';
+    arrOfPlayerNames[otherplayersock][0] = '\0';
+    close(socket);
+    close(otherplayersock);
+}
+
+bool get_move(char player, int socket, int otherplayersock, char board[3][3], bool gameOver, int gameID) {
 
     bool validMove = false;
     char movebuf[BUFSIZE];
     char boardString[BUFSIZE];
-
     bool msgsent = false;
+    int socketStatus;
 
     while (!validMove) {
         char package[BUFSIZE];
@@ -758,17 +1013,23 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
         strcat(package, content);
 
         if (!msgsent) {
-            check(write(socket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(socket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(socket, otherplayersock);
+                pthread_exit(NULL);
+            }
             msgsent = true;
         }
-
 
         // Clear the buffer before receiving input from Player O
         memset(movebuf, 0, BUFSIZE * sizeof(char));
 
-        int bytesReceived = read(socket, movebuf, BUFSIZE);
-
-        if (bytesReceived <= 0) {
+        int bytesReceived = check_session(recv(socket, movebuf, BUFSIZE, MSG_PEEK | MSG_DONTWAIT), "Read failed",
+                                          gameID);
+        if (bytesReceived == 0) {
+            clean_up_session(socket, otherplayersock);
+            pthread_exit(NULL);
+        } else if (bytesReceived < 0) {
             sleep(((unsigned int) 0.1));
             continue;
         }
@@ -785,9 +1046,12 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
             sprintf(content, "%ld|%s", strlen(updatePlayer2) - 1, updatePlayer2); // Not including '\n' in byte count.
             strcat(package, serverMsg2);
             strcat(package, content);
-            check(write(socket, package, strlen(package)), "Send failed");
+            socketStatus = check_session(write(socket, package, strlen(package)), "Send failed", gameID);
+            if (socketStatus == SOCKETERROR && errno == EPIPE) {
+                clean_up_session(socket, otherplayersock);
+                pthread_exit(NULL);
+            }
             msgsent = false;
-
         } else {
 
             row--;
@@ -848,8 +1112,14 @@ bool get_move(char player, int socket, int otherplayersock, char board[3][3], bo
     sprintf(content, "%ld|%c|%s|%s|\n", strlen(movebuf) + strlen(boardString) + 4, player, movebuf, boardString);
     strcat(package, serverMsg);
     strcat(package, content);
-    check(write(socket, package, strlen(package)), "Send failed");
-    check(write(otherplayersock, package, strlen(package)), "Send failed");
+
+
+    int socketStatusX = check_session(write(socket, package, strlen(package)), "Send failed", gameID);
+    int socketStatusO = check_session(write(otherplayersock, package, strlen(package)), "Send failed", gameID);
+    if ((socketStatusX == SOCKETERROR && errno == EPIPE) || (socketStatusO == SOCKETERROR && errno == EPIPE)) {
+        clean_up_session(socket, otherplayersock);
+        pthread_exit(NULL);
+    }
     return gameOver;
 }
 
