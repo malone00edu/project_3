@@ -170,17 +170,19 @@ int main(int argc, char **argv) {
                     // Starts at 4 because 0 to 3 is inuse already.
                     // 0 = STDIN_FILENO, 1 = STDIN_FILENO, 2 = STDERR_FILENO, 3 = The server socket.
                     for (int j = 4; j < largestActiveSocket; j++) {
-                        if (strcmp(arrOfPlayerNames[j], nameBuf) == 0) {
-                            lenErrMsg = strlen(invlErrMsg3);
-                            sprintf(content, "%d|%s", lenErrMsg, invlErrMsg3);
-                            strcpy(package, "INVL|");
-                            strcat(package, content);
-                            check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
-                            nameExist = true;
-                            memset(nameBuf, 0, BUFSIZE * sizeof(char));
-                            memset(content, 0, CONTENTSIZE * sizeof(char));
-                            memset(package, 0, BUFSIZE * sizeof(char));
-                            break;
+                        if (arrOfPlayerNames[j] != NULL) {
+                            if (strcmp(arrOfPlayerNames[j], nameBuf) == 0) {
+                                lenErrMsg = strlen(invlErrMsg3);
+                                sprintf(content, "%d|%s", lenErrMsg, invlErrMsg3);
+                                strcpy(package, "INVL|");
+                                strcat(package, content);
+                                check(write(playerArrOfSockets[currSocket], package, strlen(package)), "Send failed");
+                                nameExist = true;
+                                memset(nameBuf, 0, BUFSIZE * sizeof(char));
+                                memset(content, 0, CONTENTSIZE * sizeof(char));
+                                memset(package, 0, BUFSIZE * sizeof(char));
+                                break;
+                            }
                         }
                     }
                 }
@@ -300,7 +302,7 @@ void *ttt_session(void *sessionID) {
     int gameID = *((int *) sessionID);
     assert(gameID != -1);
 
-    printf("[After calling pthread_create; getpid: %d, getpthread_self: %lu]\n", getpid(), pthread_self());
+    printf("[After calling pthread_create; getpid: %d, getpthread_self: %lu]\n", getpid(), (unsigned long) pthread_self());
     printf("Session %d is active.\n", tttArray[gameID].gameID + 1);
 
     int xBytesReceived = 0, oBytesReceived = 0;
