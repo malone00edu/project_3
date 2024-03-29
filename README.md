@@ -7,6 +7,10 @@ INTRO:
 
 This is a simple online tic tac toe game that supports multiple game sessions at once.
 
+
+https://github.com/malone00edu/project_3/assets/93667152/aeb62f17-7f78-437f-93d3-96a16c9f5de0
+
+
 IMPLEMENTATION:
 
 Sockets are used to create a connection between server and client. The open_listener function initialize a socket and sets it to listen on a specified port. The server accepts connection and assigns the client to a tic tac toe game session. Sessions are assigned every time two clients connect to the server.
