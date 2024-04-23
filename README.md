@@ -15,7 +15,7 @@ IMPLEMENTATION:
 
 Sockets are used to create a connection between server and client. The open_listener function initialize a socket and sets it to listen on a specified port. The server accepts connection and assigns the client to a tic tac toe game session. Sessions are assigned every time two clients connect to the server.
 
-In the loop, pthread_create is use to create new thread for each game session. It calls the ttt_session function which initializes and start the game. Each game session is given a session id, which is allocated in memory. Pthread allows multiple games to run concurrently.
+In the loop, pthread_create is use to create new thread for each game session. It calls the ttt_session function which initializes and start the game. Each game session is given a session id, which is allocated in memory. Pthreads allows multiple games to run concurrently.
 
 The function ttt_session contain the game logic. It uses write() to send prompts to the clients and read() to get user inptus such as move,ff, or draw etc. The sockets for each player is set to nonblocking flag, which prevent the client from blocking information when their opponent commit an action.
 
